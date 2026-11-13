@@ -21,15 +21,21 @@
 #include "keypad_input.h"
 #include "alarm.h"
 #include "Timer_With_Audio.h"
+#include <RTClib.h>
 
 // 16 keys, then N (no key) and F (fail). Pick the one for your keypad.
 char keymap[19] = "D#0*C987B654A321NF";     // heavy-duty keypad
 const int clk_pin = 5;
 
+RTC_DS3231 rtc; // initalize the rtc we're using 
+
 // ---------------
+volatile int num_tick = 0;
 volatile int num_time = 0;
+
 int mode = 0;
 int last_time = 0;
+int last_tick = 0;
 int time_format = 0;
 bool alarm_enabled = false;
 //---------------
@@ -42,7 +48,7 @@ int audio_start_time = 0;
 
 //----------------
 void ISR_clk(){
-    num_time++;
+    num_tick++;
 };
 // ---------------
 
@@ -118,18 +124,23 @@ void setup() {
     }
     
     keyPad.loadKeyMap(keymap);
-
+    
     attachInterrupt(
         digitalPinToInterrupt(clk_pin),
         ISR_clk,
         RISING
-    );    
+    );
+    
     setupAudio();
+    rtc.begin();
 }
 
 
 void loop() {
     char c = keyPad.getChar();
+    DateTime now = rtc.now();
+    num_time = now.second();
+
     if (millis() - last_input_time >= input_delay){
         if (c != 'N' && c != 'F'){ // make sure it's not N (no in) or F (fail) 
             Serial.println(c);
@@ -142,15 +153,22 @@ void loop() {
             last_input_time = millis();           
         }
     }
+
     // do other program stuff 
     if (mode == 2){
         if (num_time != last_time){
-            Serial.println(num_time);
+            Serial.printf("%04d/%02d/%02d %02d:%02d:%02d\n",
+                  now.year(),
+                  now.month(),
+                  now.day(),
+                  now.hour(),
+                  now.minute(),
+                  now.second());
             last_time = num_time;
         }
     }
     if (mode == 6){
-        if (num_time == atoi(alarm_time) && alarm_enabled == true 
+        if (num_tick == atoi(alarm_time) && alarm_enabled == true 
                                          && play_audio == false){
             
             playAudio();
@@ -158,14 +176,14 @@ void loop() {
             play_audio = true;
         }
         if (play_audio == true){
-            if(num_time - audio_start_time == audio_duration){
+            if(num_tick - audio_start_time == audio_duration){
                 stopAudio();
                 play_audio = false;
             }
         }
-        if (num_time != last_time){
-            Serial.println(num_time);
-            last_time = num_time;
+        if (num_tick != last_tick){
+            Serial.println(num_tick);
+            last_tick = num_tick;
         }
     }
 }
