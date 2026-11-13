@@ -21,29 +21,26 @@
 #include "keypad_input.h"
 #include "alarm.h"
 #include "Timer_With_Audio.h"
-#include "TeamRtc.h"
-
-#if !defined(CONFIG_IDF_TARGET_ESP32S3)
-#error "Select ESP32S3 Dev Module in Arduino IDE."
-#endif
+#include <RTClib.h>
+#include "esp_timer.h"
 
 // 16 keys, then N (no key) and F (fail). Pick the one for your keypad.
 char keymap[19] = "D#0*C987B654A321NF";     // heavy-duty keypad
-const int sda_pin = 8;
-const int scl_pin = 9;
-const int clk_pin = 5; // DS3231 SQW.
-static_assert(sda_pin != scl_pin && clk_pin != sda_pin && clk_pin != scl_pin,
-              "SDA, SCL and SQW must use different GPIO pins.");
+const int clk_pin = 5;
+
+RTC_DS3231 rtc; // initalize the rtc we're using 
 
 // ---------------
+volatile int num_tick = 0;
 volatile int num_time = 0;
-int mode = 0;
+
+int mode = KEYPAD_MENU;
 int last_time = 0;
+int last_tick = 0;
 int time_format = 0;
 bool alarm_enabled = false;
 //---------------
 char alarm_time[5] = {0};
-uint32_t alarm_at_minute = 0;
 
 int audio_duration = 10;
 bool play_audio = false;
@@ -52,18 +49,38 @@ int audio_start_time = 0;
 
 //----------------
 void ISR_clk(){
-    num_time++;
+    num_tick++;
 };
 // ---------------
 
 I2CKeyPad keyPad(0x20);     // fixed on the TK85; the compact adapter ships here
-unsigned long last_input_time = 0;
-const unsigned long input_delay = 300; // 500 ms
+
+void print_menu() {
+    Serial.println("Menu: 1 or A = Clock, 2 = Stopwatch, B = Advanced Clock / Alarm");
+    Serial.println("# = Menu from any mode");
+}
+
+void print_stopwatch(bool force) {
+    static unsigned long last_print_ms = 0;
+    static uint64_t last_value = 0;
+    const unsigned long now_ms = millis();
+    if (!force && now_ms - last_print_ms < 100) {
+        return;
+    }
+    last_print_ms = now_ms;
+
+    const uint64_t cs = keypad_stopwatch_centiseconds((uint64_t)esp_timer_get_time());
+    if (force || cs != last_value) {
+        Serial.printf("Stopwatch %02llu:%02u.%02u\n", (unsigned long long)(cs / 6000U),
+                      (unsigned)((cs / 100U) % 60U), (unsigned)(cs % 100U));
+        last_value = cs;
+    }
+}
 
 
 void set_clock_fxn(char user_input, int* mode){
     if (user_input == 'A'){
-        *mode = 2;
+        *mode = KEYPAD_CLOCK;
         Serial.println("You're in basic clock mode (2)!");
     }
     else if (user_input == 'B'){
@@ -82,7 +99,7 @@ void set_program_mode(char user_input, int* mode, int* time_format, bool*
     doesn't set any more additional modes.
     */
     switch(*mode){
-        case 1:
+        case KEYPAD_MENU:
             set_clock_fxn(user_input, mode);         
             break;
         case 3:
@@ -114,38 +131,13 @@ void set_format(char user_input, int* mode, int* time_format){
     }
 }
 
-static void arm_rtc_alarm() {
-    TeamRtcTime now;
-    if (team_rtc_read(&now) != TEAM_RTC_OK) {
-        alarm_enabled = false;
-        Serial.println("Alarm not set. Check or set the DS3231 time, then try again.");
-        return;
-    }
-
-    constexpr uint32_t minutes_per_day = 24U * 60U;
-    const uint32_t now_minute = team_rtc_calendar_minute(&now);
-    const int hhmm = atoi(alarm_time);
-    alarm_at_minute = now_minute - now_minute % minutes_per_day + (hhmm / 100) * 60 + hhmm % 100;
-    if (alarm_at_minute <= now_minute) {
-        alarm_at_minute += minutes_per_day;
-    }
-    if (alarm_at_minute >= 36525U * minutes_per_day) {
-        alarm_enabled = false;
-        Serial.println("Alarm not set. Target date exceeds the supported RTC calendar.");
-    }
-}
-
 
 void setup() {
     Serial.begin(115200);
-    Wire.begin(sda_pin, scl_pin, 100000);     // the PCF8574 is rated for 100 kHz
+    Wire.begin();
+    Wire.setClock(100000);     // the PCF8574 is rated for 100 kHz
     delay(10); // serial behaves weirdly if you don't let it sit for a bit so
                //that's why there is a delay here
-    if (team_rtc_begin()) {
-        Serial.println("DS3231 ready at 0x68. SQW configured for 1 Hz.");
-    } else {
-        Serial.println("DS3231 setup failed. Check RTC power, SDA and SCL.");
-    }
     while (!keyPad.begin()){
         // Sit here untill the keypad is pluged in
         Serial.println("No keypad at 0x20");
@@ -153,73 +145,87 @@ void setup() {
     }
     
     keyPad.loadKeyMap(keymap);
-
-    pinMode(clk_pin, INPUT_PULLUP);
+    
     attachInterrupt(
         digitalPinToInterrupt(clk_pin),
         ISR_clk,
         RISING
-    );    
+    );
+    
     setupAudio();
+    rtc.begin();
+    print_menu();
 }
 
 
 void loop() {
-    char c = keyPad.getChar();
-    if (millis() - last_input_time >= input_delay){
-        if (c != 'N' && c != 'F'){ // make sure it's not N (no in) or F (fail) 
-            Serial.println(c);
-            // handle the input given what mode you're in and the input  
-            if (c == '#') {
-                mode = 1;
-                Serial.println("You're in Program mode (1)!");
+    char c = keypad_take_press(keyPad.getChar(), millis());
+    if (c != '\0') {
+        Serial.println(c);
+        const int next_mode = keypad_menu_mode(c, mode);
+        if (c == '#') {
+            if (mode == 5) {
+                reset_string_input();
             }
-            const bool entering_alarm_time = mode == 5;
+            mode = next_mode;
+            print_menu();
+        } else if (next_mode != mode) {
+            mode = next_mode;
+            if (mode == KEYPAD_STOPWATCH) {
+                Serial.println("Stopwatch: A = Start/Pause/Resume, B = Reset, # = Menu");
+                print_stopwatch(true);
+            } else {
+                last_time = -1;
+                Serial.println("You're in basic clock mode (2)!");
+            }
+        } else if (mode == KEYPAD_STOPWATCH) {
+            if (keypad_stopwatch_key(c, (uint64_t)esp_timer_get_time())) {
+                print_stopwatch(true);
+            }
+        } else {
             set_program_mode(c, &mode, &time_format, &alarm_enabled, alarm_time);
-            if (entering_alarm_time && mode == 6 && alarm_enabled) {
-                arm_rtc_alarm();
-            }
-            last_input_time = millis();           
         }
     }
-    const int ticks = num_time;
-    if (play_audio && ticks - audio_start_time >= audio_duration) {
-        stopAudio();
-        play_audio = false;
-    }
 
-    if ((mode != 2 && mode != 6) || ticks == last_time) {
-        return;
-    }
-    last_time = ticks;
-
-    TeamRtcTime now;
-    const TeamRtcResult result = team_rtc_read(&now);
-    if (result == TEAM_RTC_IO_ERROR) {
-        Serial.println("RTC read failed. Check SDA and SCL.");
-        return;
-    }
-    if (result == TEAM_RTC_TIME_INVALID) {
-        Serial.println("RTC needs setup. Set the current time using RTC_Only_C.");
+    if (mode == KEYPAD_STOPWATCH) {
+        print_stopwatch(false);
         return;
     }
 
-    if (mode == 6 && alarm_enabled && !play_audio) {
-        const uint32_t now_minute = team_rtc_calendar_minute(&now);
-        if (now_minute == alarm_at_minute) {
+    DateTime now = rtc.now();
+    num_time = now.second();
+
+    // do other program stuff 
+    if (mode == KEYPAD_CLOCK){
+        if (num_time != last_time){
+            Serial.printf("%04d/%02d/%02d %02d:%02d:%02d\n",
+                  now.year(),
+                  now.month(),
+                  now.day(),
+                  now.hour(),
+                  now.minute(),
+                  now.second());
+            last_time = num_time;
+        }
+    }
+    if (mode == 6){
+        if (num_tick == atoi(alarm_time) && alarm_enabled == true 
+                                         && play_audio == false){
+            
             playAudio();
-            audio_start_time = ticks;
+            audio_start_time = num_time;
             play_audio = true;
         }
-        if (now_minute >= alarm_at_minute) {
-            alarm_enabled = false; // One-shot alarm, even if mode 6 is left and later resumed.
+        if (play_audio == true){
+            if(num_tick - audio_start_time == audio_duration){
+                stopAudio();
+                play_audio = false;
+            }
         }
-    }
-
-    if (mode == 6 && time_format == 1) {
-        Serial.printf("%02u%02u\n", (unsigned)now.hour, (unsigned)now.minute);
-    } else {
-        Serial.printf("%02u:%02u:%02u\n", (unsigned)now.hour, (unsigned)now.minute, (unsigned)now.second);
+        if (num_tick != last_tick){
+            Serial.println(num_tick);
+            last_tick = num_tick;
+        }
     }
 }
 
