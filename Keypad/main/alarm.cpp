@@ -19,10 +19,10 @@ void set_alarm_time(int* mode, char user_char_input, char* alarm_time){
         if (verify_alarm_time_seconds(length_of_input_string, 
                                          user_str_input) == 1){
             Serial.println("Invalid string, please try again");
-            *mode = 5;
+            *mode = 7;
         } 
         else {
-            *mode = 6;
+            *mode = 8;
             // the less than or equal will include the \0 character
             Serial.println(user_str_input);
             // <= because we want the 5th \0 character
@@ -74,12 +74,12 @@ void set_alarm(char user_input, int* mode, bool* alarm_enabled){
         Serial.println("Alarm mode activated");
         Serial.print("Please Enter your alarm time: ");
         *alarm_enabled = true; 
-        *mode = 5; 
+        *mode = 7; 
     }
     if (user_input == '0'){
         Serial.println("No alarm");
         *alarm_enabled = false;
-        *mode = 6;
+        *mode = 8;
     }
 }
 

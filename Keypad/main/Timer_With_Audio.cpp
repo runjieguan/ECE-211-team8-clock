@@ -335,27 +335,29 @@ void setupAudio() {
   // Set starting volume
   sendCommand(0x06, volume);
 
-  Serial.println();
-  Serial.println("ESP32-S3 RTC TIMER");
-  Serial.println("------------------------");
+  Serial.println("AUDIO SETUP COMPLETE!");
 
-  Serial.println("MP3 Module Initialized");
+  // Serial.println();
+  // Serial.println("ESP32-S3 RTC TIMER");
+  // Serial.println("------------------------");
 
-  Serial.println("Starting Volume: 20");
+  // Serial.println("MP3 Module Initialized");
 
-  Serial.println();
-  Serial.println("CONTROLS");
+  // Serial.println("Starting Volume: 20");
 
-  Serial.println("Stop Timer / Audio: S");
+  // Serial.println();
+  // Serial.println("CONTROLS");
 
-  Serial.println("Volume Down: -");
-  Serial.println("Volume Up: +");
+  // Serial.println("Stop Timer / Audio: S");
 
-  Serial.println("Select Track 1: T1");
-  Serial.println("Select Track 2: T2");
+  // Serial.println("Volume Down: -");
+  // Serial.println("Volume Up: +");
 
-  Serial.println();
-  Serial.println("Enter timer length in seconds:");
+  // Serial.println("Select Track 1: T1");
+  // Serial.println("Select Track 2: T2");
+
+  // Serial.println();
+  // Serial.println("Enter timer length in seconds:");
 
 }
 
