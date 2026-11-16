@@ -315,13 +315,6 @@ void checkSerialInput() {
 // =====================================
 
 void setupAudio() {
-
-  Serial.begin(115200);
-
-  while (!Serial) {
-    delay(10);
-  }
-
   // Initialize MP3 UART
   MP3_SERIAL.begin(9600, SERIAL_8N1, MP3_RX, MP3_TX);
 
@@ -358,7 +351,9 @@ void setupAudio() {
 
   // Serial.println();
   // Serial.println("Enter timer length in seconds:");
-
+  playAudio();
+  delay(1000);
+  stopAudio();
 }
 
 // =====================================
@@ -421,4 +416,5 @@ void timerRun() {
     }
   }
 }
+
 

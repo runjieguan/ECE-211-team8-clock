@@ -57,9 +57,11 @@ void displayTime(int hour, int minute, int second, int time_format,
 }
 
 void setupLCD() {
-
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH); 
   lcd.init();
   lcd.backlight();
+  Serial.println("LCD SETUP!");
 
 }
 
